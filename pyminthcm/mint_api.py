@@ -350,7 +350,14 @@ class Module:
         return self.minthcm.get(f"{self.minthcm.baseurl}{url}")
 
     def get(
-        self, fields: list = None, sort: str = None, operator: str = "and", **filters
+        self,
+        fields: list = None,
+        sort: str = None,
+        operator: str = "and",
+        number_of_pages: int | None = None,
+        start_page: int = 1,
+        items_per_page: int = 100,
+        **filters,
     ) -> list:
         """
         Gets records given a specific id or filters, can be sorted only once, and the fields returned for each record
@@ -358,8 +365,16 @@ class Module:
 
         :param fields: (list) A list of fields you want to be returned from each record.
         :param sort: (string) The field you want the records to be sorted by.
-        :param filters: (**kwargs) fields that the record has that you want to filter on.
-                        ie... date_start= {'operator': '>', 'value':'2020-05-08T09:59:00+00:00'}
+        :param operator: (string) The operator to use for filtering. Can be "and" or "or".
+        :param number_of_pages: (int) The number of pages to retrieve. If None, retrieves all pages.
+        :param start_page: (int) The page number to start from.
+        :param items_per_page: (int) The number of records per page.
+        :param filters: (**kwargs) The filters to apply to the records. The keys are the field names and the values are the filter values.
+            e.g. filters={"field_name": "value"}.
+            You can also use operators like "BETWEEN" or "LIKE" by passing a dictionary as the value.
+            e.g. filters={"field_name": {"operator": "BETWEEN", "value": "value1,value2"}}.
+            You can also use "IN" or "NOT IN" operators by passing a list as the value.
+            e.g. filters={"field_name": {"operator": "IN", "value": ["value1", "value2"]}}.
 
         Important notice: we don’t support multiple level sorting right now!
 
@@ -405,16 +420,74 @@ class Module:
         if sort:
             url += f"&sort=-{sort}"
 
-        return self.minthcm.get(url)
+        result = self.minthcm.get(
+            f"{url}&page[number]={start_page}&page[size]={items_per_page}"
+        )
+
+        number_of_pages = (
+            result.get("meta", {}).get("total-pages", 1)
+            if number_of_pages is None
+            else number_of_pages
+        )
+
+        curr_page = start_page
+        processed_pages = 0
+
+        final_records = {"data": []}
+
+        while (
+            curr_page < start_page + number_of_pages
+            and processed_pages <= number_of_pages
+        ):
+            curr_url = f"{url}&page[number]={curr_page}&page[size]={items_per_page}"
+
+            result = self.minthcm.get(curr_url)
+            final_records["data"].extend(result.get("data", []))
+            processed_pages += 1
+            curr_page += 1
+
+        return final_records
 
     def get_all_records(self) -> dict:
         """
-        Gets all the records in a module.
+        Gets all the records in a module, handling pagination.
 
-        :return: (dictionary) A list of all the records in the module.
+        :param items_per_page: (int) Number of records per page (optional, defaults to 100)
+        :return: (dict) A dictionary containing all the records in the module.
         """
-        url = f"/module/{self.module_name}"
-        return self.minthcm.get(f"{self.minthcm.baseurl}{url}")
+        base_url = f"{self.minthcm.baseurl}/module/{self.module_name}"
+
+        start_page = 1
+        items_per_page = 100
+
+        first_url = f"{base_url}?page[number]={start_page}&page[size]={items_per_page}"
+        result = self.minthcm.get(first_url)
+
+        number_of_pages = result.get("meta", {}).get("total-pages", 1)
+
+        curr_page = start_page
+        processed_pages = 0
+        final_records = {"data": []}
+
+        while (
+            curr_page < start_page + number_of_pages
+            and processed_pages < number_of_pages
+        ):
+            curr_url = (
+                f"{base_url}?page[number]={curr_page}&page[size]={items_per_page}"
+            )
+            result = self.minthcm.get(curr_url)
+
+            data = result.get("data", [])
+            if not data:
+                break
+
+            final_records["data"].extend(data)
+
+            processed_pages += 1
+            curr_page += 1
+
+        return final_records
 
     def get_relationship(self, record_id: str, related_module_name: str) -> dict:
         """
